@@ -71,6 +71,7 @@ create table if not exists evaluations (
   person_scores jsonb,                       -- {personId: score}
   unmet jsonb,                               -- soft preferences not (fully) met
   unverified jsonb,                          -- preferences we could not check from listing data
+  met jsonb,                                 -- preferences the flat satisfies (ranked flats only)
   rank int,
   status text,                               -- agreed | pending | rejected (top N only)
   explanation text,
@@ -78,6 +79,7 @@ create table if not exists evaluations (
   created_at timestamptz not null default now()
 );
 create index if not exists evaluations_run_idx on evaluations(run_id);
+alter table evaluations add column if not exists met jsonb;
 
 create table if not exists compromises (
   id uuid primary key default gen_random_uuid(),

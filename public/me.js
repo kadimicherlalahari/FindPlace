@@ -1,4 +1,4 @@
-import { $, api, esc, inr, toast, confetti } from './shared.js';
+import { $, api, esc, inr, toast, confetti, breakdownHtml, factsHtml, runnersUpHtml, tradeoffGridHtml } from './shared.js';
 
 const token = location.pathname.split('/').pop();
 const HEARTS = ['💜', '🧡', '💚'];
@@ -61,9 +61,14 @@ function render() {
 }
 
 // ---------- wishlist wizard ----------
+// Mirrors commuteTrips() on the server: old single-trip values read as a list.
+const tripsOf = (v) => (Array.isArray(v?.trips) ? v.trips : v?.from ? [v] : []);
+const filledTrips = (v) => tripsOf(v).filter((t) => t.from?.trim());
+
 function isSet(key, value) {
   const dd = def(key);
   if (!value) return false;
+  if (key === 'commute') return filledTrips(value).length > 0;
   const empty = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length) || v === false;
   const req = dd.fields.filter((f) => f.required);
   return req.length ? req.every((f) => !empty(value[f.name])) : dd.fields.some((f) => !empty(value[f.name]));
@@ -75,12 +80,15 @@ function summary(key, v) {
   const f = (n) => def(key).fields.find((x) => x.name === n);
   switch (key) {
     case 'locations': return v.areas;
+    case 'avoidAreas': return `Not ${v.areas}`;
+    case 'bathrooms': return `${v.min}+ bathroom${Number(v.min) === 1 ? '' : 's'}`;
+    case 'lift': return v.aboveFloor !== undefined && v.aboveFloor !== '' ? `Above floor ${v.aboveFloor}` : 'Always';
     case 'maxRent': return `Up to ${inr(v.amount)}/month`;
     case 'maxDeposit': return `Up to ${inr(v.amount)}`;
     case 'bhk': return `${v.min}+ BHK`;
     case 'minSize': return `${v.sqft}+ sq ft`;
     case 'furnishing': return v.accepted.map((x) => optLabel(f('accepted').options, x)).join(', ');
-    case 'commute': return `${v.maxMinutes ? `≤ ${v.maxMinutes} min` : `≤ ${v.maxKm} km`} to ${v.from}`;
+    case 'commute': return filledTrips(v).map((t) => `${t.name || t.from} ${t.maxMinutes ? `≤ ${t.maxMinutes} min` : t.maxKm ? `≤ ${t.maxKm} km` : ''}`.trim()).join(' · ');
     case 'parking': return `For a ${optLabel(f('type').options, v.type).toLowerCase()}`;
     case 'amenities': return [...(v.items || []).map((x) => optLabel(f('items').options, x)), v.other].filter(Boolean).join(', ');
     case 'moveIn': return `By ${new Date(v.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}${v.flexDays ? ` ± ${v.flexDays} days` : ''}`;
@@ -90,6 +98,7 @@ function summary(key, v) {
 }
 
 function fieldHtml(key, f, v) {
+  if (f.type === 'trips') return tripsHtml(key, f, v);
   const id = `${key}-${f.name}`;
   const val = v?.[f.name];
   const lbl = `<label class="lbl" for="${id}">${esc(f.label)}</label>`;
@@ -102,6 +111,21 @@ function fieldHtml(key, f, v) {
     case 'toggle': return `<div class="field"><label class="switch">${esc(f.label)}<input type="checkbox" data-f="${f.name}" ${val ? 'checked' : ''}></label></div>`;
     default: return `<div class="field">${lbl}<input id="${id}" data-f="${f.name}" value="${esc(val ?? '')}" placeholder="${esc(f.placeholder || '')}"></div>`;
   }
+}
+
+// Repeatable commute destinations: office, gym, family.
+function tripsHtml(key, f, v) {
+  const trips = tripsOf(v).length ? tripsOf(v) : [{}];
+  const field = (i, t, name) => fieldHtml(`${key}-${i}`, f.itemFields.find((x) => x.name === name), t);
+  return `<div class="trips">${trips.map((t, i) => `
+    <div class="trip" role="group" aria-label="Place ${i + 1}" data-trip="${i}">
+      <div class="trip-head"><b>Place ${i + 1}${t.name ? `: ${esc(t.name)}` : ''}</b>${trips.length > 1 ? `<button type="button" class="trip-remove" data-trip-remove="${i}" aria-label="Remove place ${i + 1}">Remove</button>` : ''}</div>
+      <div class="grid2 trip-who">${field(i, t, 'name')}${field(i, t, 'mode')}</div>
+      ${field(i, t, 'from')}
+      <div class="grid2">${field(i, t, 'maxMinutes')}${field(i, t, 'maxKm')}</div>
+    </div>`).join('')}
+    ${trips.length < f.max ? `<button type="button" class="btn btn-ghost btn-block trip-add" data-trip-add>+ Add ${trips.length === 1 ? 'another place (gym, family…)' : 'one more place'}</button>` : ''}
+  </div>`;
 }
 
 function prefCard(key) {
@@ -136,10 +160,19 @@ const tagHtml = (set, priority) => set
   ? `<span class="tag ${priority}">${priority === 'must' ? '💯 Must' : '🤝 Flexible'}</span>`
   : '<span class="tag add">+ Add</span>';
 
+function readTrips(card, f) {
+  return [...card.querySelectorAll('.trip')].map((el) => {
+    const t = {};
+    for (const x of f.itemFields) t[x.name] = el.querySelector(`[data-f="${x.name}"]`).value;
+    return t;
+  });
+}
+
 function readCard(card) {
   const d = def(card.dataset.key);
   const value = {};
   for (const f of d.fields) {
+    if (f.type === 'trips') { value[f.name] = readTrips(card, f); continue; }
     const els = card.querySelectorAll(`[data-f="${f.name}"]`);
     if (f.type === 'multi') value[f.name] = [...els].filter((e) => e.checked).map((e) => e.value);
     else if (f.type === 'toggle') value[f.name] = els[0].checked;
@@ -209,6 +242,19 @@ function renderWishlist() {
       state.open.delete(key);
       renderWishlist();
     };
+    card.querySelector('[data-trip-add]')?.addEventListener('click', () => {
+      const entry = readCard(card);
+      entry.value.trips.push({});
+      state.draft[key] = entry;
+      renderWishlist();
+      document.querySelector(`.pref[data-key="${key}"] .trip:last-of-type input`)?.focus();
+    });
+    card.querySelectorAll('[data-trip-remove]').forEach((b) => b.addEventListener('click', () => {
+      const entry = readCard(card);
+      entry.value.trips.splice(Number(b.dataset.tripRemove), 1);
+      state.draft[key] = entry;
+      renderWishlist();
+    }));
     const update = () => { state.draft[key] = readCard(card); refreshCardHead(card); };
     card.addEventListener('input', update);
     card.addEventListener('change', update);
@@ -218,7 +264,11 @@ function renderWishlist() {
 
 function draftPayload() {
   const out = {};
-  for (const [k, v] of Object.entries(state.draft)) if (isSet(k, v?.value)) out[k] = { value: v.value, priority: v.priority, note: v.note };
+  for (const [k, v] of Object.entries(state.draft)) {
+    if (!isSet(k, v?.value)) continue;
+    const value = k === 'commute' ? { trips: filledTrips(v.value) } : v.value;
+    out[k] = { value, priority: v.priority, note: v.note };
+  }
   return out;
 }
 
@@ -233,11 +283,11 @@ async function navigate(dir, btn) {
 
 async function submit(btn) {
   const c = state.draft.commute?.value;
-  if (c?.from && !c.maxMinutes && !c.maxKm) {
+  if (filledTrips(c).some((t) => !t.maxMinutes && !t.maxKm)) {
     state.step = state.schema.steps.findIndex((s) => s.keys.includes('commute'));
     state.open.add('commute');
     renderWishlist();
-    return toast('Add a max commute time or distance 🚌');
+    return toast('Add a max time or distance for each place 🚌');
   }
   if (!Object.keys(draftPayload()).length) return toast('Add at least one preference first 💜');
   btn.disabled = true;
@@ -305,7 +355,8 @@ function telegramCard() {
 const STATUS = { agreed: '✅ Everyone agrees', pending: '⏳ Waiting on answers', rejected: '❌ Someone said no' };
 
 function renderShortlist() {
-  const { run, top } = state.data.results;
+  const { run, top, runnersUp } = state.data.results;
+  const friends = state.data.friends;
   const pending = myPending().length;
   const passed = run.evaluated_count - run.eliminated_count;
   const reasons = run.elimination_summary || [];
@@ -317,8 +368,11 @@ function renderShortlist() {
       <div class="stat pass"><b>${passed}</b><span>passed must-haves</span></div>
     </div>
     ${pending ? `<div class="banner">💌 You have ${pending} compromise question${pending > 1 ? 's' : ''} below</div>` : ''}
+    ${tradeoffGridHtml(top, friends, me().id)}
+    ${top.length ? `<a class="btn btn-ghost btn-block" href="/r/${esc(run.id)}" target="_blank" rel="noopener">🗂 Open the group's comparison page</a>` : ''}
     ${reasons.length ? `<details class="card"><summary class="display" style="cursor:pointer">Why flats were ruled out</summary><ul style="margin:10px 0 0;padding-left:20px">${reasons.slice(0, 6).map((r) => `<li>${esc(r.personName)}'s ${esc(r.label.toLowerCase())}: <b>${r.count}</b> flat${r.count > 1 ? 's' : ''}</li>`).join('')}</ul></details>` : ''}
     ${top.length ? top.map(aptCard).join('') : `<div class="card celebrate"><div class="big">😕</div><h2 style="margin-top:12px">No flat ticked everyone's must-haves</h2><p class="muted" style="margin-top:8px">Try switching a must-have to "Can compromise" and resubmit.</p></div>`}
+    ${runnersUpHtml(runnersUp, friends, me().id)}
     ${telegramCard()}`;
   $('#content').querySelectorAll('[data-answer]').forEach((b) => b.onclick = () => answer(b.dataset.id, b.dataset.answer, b));
 }
@@ -327,9 +381,9 @@ function aptCard(t) {
   const l = t.listing;
   const friends = state.data.friends;
   const byId = Object.fromEntries(friends.map((f) => [f.id, f]));
-  const comps = [...t.compromises].sort((a, b) => (b.person_id === me().id) - (a.person_id === me().id));
+  const mine = t.compromises.filter((c) => c.person_id === me().id);
   return `
-    <article class="apt ${t.status}">
+    <article class="apt ${t.status}" id="flat-${t.rank}">
       <div class="apt-photo">
         ${l.photos?.[0] ? `<img src="${esc(l.photos[0])}" alt="" loading="lazy">` : ''}
         <span class="rank">#${t.rank}</span>
@@ -337,22 +391,10 @@ function aptCard(t) {
       </div>
       <div class="apt-body">
         <h3>${esc(l.title)}</h3>
-        <div class="facts">
-          <span>📍 ${esc(l.location.locality || l.location.city || 'Location n/a')}</span>
-          <span class="money">💰 ${inr(l.rent / friends.length)} each</span>
-          <span>${inr(l.rent)}/mo total</span>
-          <span>🔐 ${inr(l.deposit)} deposit</span>
-          <span>🛏️ ${l.bhk ?? '?'} BHK</span>
-          <span>📐 ${l.sizeSqft ?? '?'} sq ft</span>
-          ${l.furnishing ? `<span>🛋️ ${esc(l.furnishing)}</span>` : ''}
-          ${l.availableFrom ? `<span>📅 from ${esc(new Date(l.availableFrom).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }))}</span>` : ''}
-        </div>
-        <div class="scores">${friends.map((f) => `
-          <div class="score-row f${f.slot}"><span class="nm">${f.id === me().id ? 'You' : esc(f.name)}</span><i style="--w:${t.person_scores[f.id]}%"></i><span>${t.person_scores[f.id]}</span></div>`).join('')}
-        </div>
+        <div class="facts">${factsHtml(l, friends.length)}</div>
         <span class="pill ${t.status}">${STATUS[t.status]}</span>
-        ${comps.length ? `<div class="comps">${comps.map((c) => compHtml(c, byId[c.person_id])).join('')}</div>` : '<p class="happy">🎉 No compromises needed. It ticks everyone\'s boxes!</p>'}
-        ${t.unverified?.length ? `<details class="check"><summary>🔍 Check on a visit (${t.unverified.length})</summary><ul>${t.unverified.map((u) => `<li>${u.personId === me().id ? `You: ${esc(u.reason)}` : `${esc(u.personName)}: ${esc(u.label.toLowerCase())}`}</li>`).join('')}</ul></details>` : ''}
+        ${mine.length ? `<div class="comps">${mine.map((c) => compHtml(c, byId[c.person_id])).join('')}</div>` : ''}
+        ${breakdownHtml(t, friends, me().id)}
         ${t.explanation ? `<p class="why">${esc(t.explanation)}</p>` : ''}
         ${l.url ? `<div class="apt-actions"><a class="btn btn-ghost btn-block" href="${esc(l.url)}" target="_blank" rel="noopener">View listing ↗</a></div>` : ''}
       </div>

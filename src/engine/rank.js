@@ -23,7 +23,7 @@ export function scoreGroup(personScores) {
 
 // people: [{id, name}], prefs: [{person_id, key, value, priority, note, interpreted}]
 export function evaluateListing(listing, people, prefs, ctx) {
-  const eliminations = [], unmet = [], unverified = [], personScores = {}, details = [];
+  const eliminations = [], unmet = [], unverified = [], met = [], personScores = {}, details = [];
   for (const person of people) {
     let total = 0, weightSum = 0;
     for (const pref of prefs.filter((p) => p.person_id === person.id)) {
@@ -31,6 +31,7 @@ export function evaluateListing(listing, people, prefs, ctx) {
       const r = evaluatePreference(listing, pref, ctx);
       const entry = { personId: person.id, personName: person.name, key: pref.key, label: def.label, priority: pref.priority, reason: r.reason, status: r.status };
       details.push(entry);
+      if (r.status === 'pass') met.push(entry);
       if (pref.priority === 'must') {
         if (r.status === 'fail' || r.status === 'partial') eliminations.push(entry);
         if (r.status === 'unknown') unverified.push(entry);
@@ -52,6 +53,7 @@ export function evaluateListing(listing, people, prefs, ctx) {
     overall: eliminations.length ? null : scoreGroup(personScores),
     unmet,
     unverified,
+    met,
     details,
   };
 }

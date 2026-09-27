@@ -4,7 +4,8 @@
 // {
 //   id, externalId, source, title,
 //   location: { address, locality, city, lat, lng },
-//   rent, deposit, bhk, sizeSqft, furnishing,  // furnishing: unfurnished|semi-furnished|furnished|null
+//   rent, deposit, bhk, bathrooms, sizeSqft, furnishing,  // furnishing: unfurnished|semi-furnished|furnished|null
+//   floor,                  // 0 = ground floor, null when unknown
 //   amenities: [token],     // normalized tokens, see FEATURE_PATTERNS
 //   amenitiesKnown: bool,   // true when the source gave a structured amenity list
 //   photos: [url], availableFrom: 'YYYY-MM-DD' | null, url, description
@@ -69,6 +70,16 @@ export function toISODate(v) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
+// "Ground floor", "3rd floor", "floor 5 of 12", "5/12" -> 0, 3, 5.
+export function toFloor(v, texts = []) {
+  const n = toNumber(v);
+  if (n != null && !(typeof v === 'string' && /ground|lower|basement/i.test(v))) return Math.max(0, Math.round(n));
+  const t = [v, ...texts].filter((x) => x != null && x !== '').join(' | ').toLowerCase();
+  if (/\b(ground|lower ground|stilt)\s*floor\b|\bon the ground\b/.test(t)) return 0;
+  const m = t.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s*floor\b/) || t.match(/\bfloor\s*(?:no\.?\s*)?(\d{1,2})\b/);
+  return m ? Number(m[1]) : null;
+}
+
 // Build a complete normalized listing from partial provider data.
 export function makeListing(source, p) {
   const amenityNames = (p.amenities || []).map(String);
@@ -88,6 +99,8 @@ export function makeListing(source, p) {
     rent: toNumber(p.rent),
     deposit: toNumber(p.deposit),
     bhk: toNumber(p.bhk),
+    bathrooms: toNumber(p.bathrooms),
+    floor: toFloor(p.floor, [p.description, p.title]),
     sizeSqft: toNumber(p.sizeSqft),
     furnishing: normalizeFurnishing(p.furnishing),
     amenities,

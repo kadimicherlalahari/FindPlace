@@ -21,6 +21,8 @@
     "rent": "price",
     "deposit": "deposit",
     "bhk": "bedrooms",
+    "bathrooms": "bathrooms",
+    "floor": "floor",
     "sizeSqft": "area_sqft",
     "furnishing": "furnishing",
     "amenities": "amenities",

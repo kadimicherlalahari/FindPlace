@@ -83,3 +83,59 @@ test('negated mentions in a listing do not trigger avoid checks', () => {
   const want = { ...pref('b', 'other', { text: 'x' }), interpreted: { checks: [{ label: 'No brokerage', keywords: ['no brokerage'], avoid: false }] } };
   assert.equal(rankListings([l], people, [want], ctx).top[0].unmet.length, 0);
 });
+
+test('areas someone won\'t consider eliminate when No Compromise', () => {
+  const listings = [flat('1', { locality: 'Whitefield' }), flat('2', { locality: 'Indiranagar' })];
+  const prefs = [pref('a', 'avoidAreas', { areas: 'Whitefield, Electronic City' }, 'must')];
+  const r = rankListings(listings, people, prefs, ctx);
+  assert.deepEqual(r.top.map((t) => t.listing.location.locality), ['Indiranagar']);
+  assert.match(r.eliminated[0].eliminations[0].reason, /Whitefield, an area you ruled out/);
+});
+
+test('bathrooms below the minimum is unmet, unknown is flagged', () => {
+  const [few, unknownBaths] = [flat('1', { bathrooms: 1 }), flat('2', {})];
+  const r = rankListings([few, unknownBaths], people, [pref('b', 'bathrooms', { min: 2 })], ctx);
+  const byId = Object.fromEntries(r.top.map((t) => [t.listing.externalId, t]));
+  assert.match(byId['1'].unmet[0].reason, /Only 1 bathroom, you want 2\+/);
+  assert.equal(byId['2'].unverified[0].key, 'bathrooms');
+});
+
+test('every commute trip must be within its own limit', () => {
+  const l = flat('1', { lat: 12.968, lng: 77.641 });
+  const c = { ...ctx, origins: { Office: { lat: 12.97, lng: 77.64 }, Gym: { lat: 13.10, lng: 77.59 } } };
+  const trips = [{ name: 'Office', from: 'Office', maxMinutes: 20 }, { name: 'Gym', from: 'Gym', maxMinutes: 20 }];
+  const r = rankListings([l], people, [pref('a', 'commute', { trips }, 'must')], c);
+  assert.equal(r.top.length, 0);
+  assert.match(r.eliminated[0].eliminations[0].reason, /to Office.*; ~\d+ min.*to Gym.*over your 20 min limit/);
+  // Only the office trip: passes.
+  assert.equal(rankListings([l], people, [pref('a', 'commute', { trips: [trips[0]] }, 'must')], c).top.length, 1);
+});
+
+test('legacy single-trip commute values still work', () => {
+  const l = flat('1', { lat: 12.968, lng: 77.641 });
+  const r = rankListings([l], people, [pref('a', 'commute', { from: 'Office', maxMinutes: 20 }, 'must')], ctx);
+  assert.equal(r.top.length, 1);
+});
+
+test('lift is only needed above the chosen floor', () => {
+  const walkUp = (id, floor) => flat(id, { floor, amenities: ['Power backup'] });
+  const prefs = [pref('b', 'lift', { needed: true, aboveFloor: 1 }, 'must')];
+  const r = rankListings([walkUp('first', 1), walkUp('fifth', 5), flat('lifted', { floor: 5, amenities: ['Lift'] })], people, prefs, ctx);
+  assert.deepEqual(r.top.map((t) => t.listing.externalId).sort(), ['first', 'lifted']);
+  assert.match(r.eliminated[0].eliminations[0].reason, /Floor 5 and no lift listed/);
+});
+
+test('floor is read from structured data or the description', () => {
+  assert.equal(makeListing('t', { externalId: 1, floor: '3' }).floor, 3);
+  assert.equal(makeListing('t', { externalId: 1, description: 'Bright flat on the 5th floor' }).floor, 5);
+  assert.equal(makeListing('t', { externalId: 1, description: 'Ground floor unit' }).floor, 0);
+  assert.equal(makeListing('t', { externalId: 1, description: 'Near metro' }).floor, null);
+});
+
+test('met lists what each person gets, alongside what they give up', () => {
+  const l = flat('1', { rent: 60000, bhk: 2 });
+  const prefs = [pref('a', 'maxRent', { amount: 25000 }), pref('a', 'bhk', { min: 3 })];
+  const [top] = rankListings([l], people, prefs, ctx).top;
+  assert.deepEqual(top.met.map((m) => [m.personId, m.key]), [['a', 'maxRent']]);
+  assert.deepEqual(top.unmet.map((m) => [m.personId, m.key]), [['a', 'bhk']]);
+});

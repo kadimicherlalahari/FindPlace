@@ -41,7 +41,12 @@ export const PREFERENCES = [
   {
     key: 'locations', label: 'Preferred areas', weight: 1.5,
     fields: [{ name: 'areas', type: 'text', label: 'Areas / neighbourhoods', placeholder: 'e.g. Indiranagar, Koramangala, HSR Layout', required: true }],
-    notePlaceholder: 'Why these areas? Anything to avoid?',
+    notePlaceholder: 'Why these areas?',
+  },
+  {
+    key: 'avoidAreas', label: 'No-go areas', weight: 1.5,
+    fields: [{ name: 'areas', type: 'text', label: 'Areas / neighbourhoods to rule out', placeholder: 'e.g. Whitefield, Electronic City', required: true }],
+    notePlaceholder: 'Too far from family? Bad memories? Only you see this.',
   },
   {
     key: 'maxRent', label: 'Rent budget', weight: 2,
@@ -64,18 +69,28 @@ export const PREFERENCES = [
     notePlaceholder: 'Specific furniture you need?',
   },
   {
+    key: 'bathrooms', label: 'Bathrooms', weight: 1.25,
+    fields: [{ name: 'min', type: 'number', label: 'Minimum bathrooms', placeholder: '2', required: true }],
+    notePlaceholder: 'e.g. an attached bathroom for my room',
+  },
+  {
     key: 'minSize', label: 'Size', weight: 1,
     fields: [{ name: 'sqft', type: 'number', label: 'Minimum carpet area (sq ft)', placeholder: '1200', required: true }],
   },
   {
-    key: 'commute', label: 'Commute', weight: 1.5,
-    fields: [
-      { name: 'from', type: 'text', label: 'Commuting to (office / college address)', placeholder: 'e.g. Manyata Tech Park, Bengaluru', required: true },
-      { name: 'maxMinutes', type: 'number', label: 'Max one-way time (minutes)', placeholder: '40' },
-      { name: 'maxKm', type: 'number', label: 'or max distance (km)', placeholder: '10' },
-      { name: 'mode', type: 'select', label: 'How you travel', options: COMMUTE_MODES },
-    ],
-    notePlaceholder: 'Days per week in office, travel times, etc.',
+    key: 'commute', label: 'Commutes', weight: 1.5,
+    fields: [{
+      name: 'trips', type: 'trips', label: 'Places you need to get to', required: true, max: 3,
+      itemFields: [
+        { name: 'name', type: 'text', label: 'What is it?', placeholder: 'e.g. Gym' },
+        { name: 'from', type: 'text', label: 'Address or landmark', placeholder: 'e.g. Manyata Tech Park, Bengaluru', required: true },
+        { name: 'maxMinutes', type: 'number', label: 'Max one-way (min)', placeholder: '40' },
+        { name: 'maxKm', type: 'number', label: 'or max distance (km)', placeholder: '10' },
+        { name: 'mode', type: 'select', label: 'How you travel', options: COMMUTE_MODES },
+      ],
+    }],
+    notePlaceholder: 'Days per week in office, how often you visit family, etc.',
+    help: 'Add up to three: office, gym, family. Each gets its own time limit.',
   },
   {
     key: 'parking', label: 'Parking', weight: 1,
@@ -89,7 +104,15 @@ export const PREFERENCES = [
     noteRequired: true,
   },
   { key: 'balcony', label: 'Balcony', weight: 0.75, fields: [{ name: 'needed', type: 'toggle', label: 'Needs a balcony' }], notePlaceholder: 'Private balcony? For plants, drying clothes?' },
-  { key: 'lift', label: 'Lift', weight: 0.75, fields: [{ name: 'needed', type: 'toggle', label: 'Needs a lift' }], notePlaceholder: 'e.g. only if above 2nd floor' },
+  {
+    key: 'lift', label: 'Lift', weight: 1,
+    fields: [
+      { name: 'needed', type: 'toggle', label: 'Needs a lift', required: true },
+      { name: 'aboveFloor', type: 'number', label: 'Only matters above floor (leave empty if always)', placeholder: '1' },
+    ],
+    notePlaceholder: 'e.g. knee condition, stairs are a hard no',
+    help: 'Ground floor is 0. Set 1 if a 1st-floor walk-up is fine but anything higher needs a lift.',
+  },
   { key: 'powerBackup', label: 'Power backup', weight: 1, fields: [{ name: 'needed', type: 'toggle', label: 'Needs power backup' }], notePlaceholder: 'Full backup or lifts & lights only?' },
   { key: 'water', label: 'Water supply', weight: 1, fields: [{ name: 'needed', type: 'toggle', label: 'Needs 24×7 water' }], notePlaceholder: 'Borewell / municipal / tanker concerns?' },
   { key: 'security', label: 'Security', weight: 1, fields: [{ name: 'needed', type: 'toggle', label: 'Needs security (guard / gated / CCTV)' }], notePlaceholder: 'What level of security matters to you?' },
@@ -118,11 +141,20 @@ export const PREFERENCES = [
 
 export const PREF_BY_KEY = Object.fromEntries(PREFERENCES.map((p) => [p.key, p]));
 
+const empty = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0) || v === false;
+
+// Commute used to be a single trip ({from, maxMinutes, ...}); it is now a list
+// of up to three. Older saved values are read as a one-trip list.
+export function commuteTrips(value) {
+  const trips = Array.isArray(value?.trips) ? value.trips : value?.from ? [value] : [];
+  return trips.filter((t) => t && !empty(t.from));
+}
+
 // A preference is "set" when all its required fields have a value.
 export function isPreferenceSet(key, value) {
   const def = PREF_BY_KEY[key];
   if (!def || !value) return false;
-  const empty = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0) || v === false;
+  if (key === 'commute') return commuteTrips(value).length > 0;
   const required = def.fields.filter((f) => f.required);
   if (required.length) return required.every((f) => !empty(value[f.name]));
   return def.fields.some((f) => !empty(value[f.name]));
@@ -130,7 +162,7 @@ export function isPreferenceSet(key, value) {
 
 // Presentation: an emoji per preference and the wizard steps they appear in.
 const EMOJI = {
-  locations: '📍', commute: '🚌', moveIn: '📅', maxRent: '💸', maxDeposit: '🔐',
+  locations: '📍', avoidAreas: '🙅‍♀️', commute: '🚌', bathrooms: '🛁', moveIn: '📅', maxRent: '💸', maxDeposit: '🔐',
   bhk: '🛏️', minSize: '📐', furnishing: '🛋️', balcony: '🪴', lift: '🛗',
   parking: '🛵', pets: '🐾', water: '🚿', powerBackup: '🔌', security: '🛡️',
   amenities: '🏋️‍♀️', other: '✨',
@@ -138,9 +170,9 @@ const EMOJI = {
 for (const p of PREFERENCES) p.emoji = EMOJI[p.key];
 
 export const STEPS = [
-  { title: 'Where & when', emoji: '🗺️', blurb: 'Neighbourhoods, your commute and when you want to move.', keys: ['locations', 'commute', 'moveIn'] },
+  { title: 'Where & when', emoji: '🗺️', blurb: 'Neighbourhoods, your commute and when you want to move.', keys: ['locations', 'avoidAreas', 'commute', 'moveIn'] },
   { title: 'Money talk', emoji: '💰', blurb: 'Your share only. Rent is split three ways.', keys: ['maxRent', 'maxDeposit'] },
-  { title: 'The flat', emoji: '🏡', blurb: 'Size, rooms and the little things.', keys: ['bhk', 'minSize', 'furnishing', 'balcony', 'lift'] },
+  { title: 'The flat', emoji: '🏡', blurb: 'Size, rooms and the little things.', keys: ['bhk', 'bathrooms', 'minSize', 'furnishing', 'balcony', 'lift'] },
   { title: 'Daily life', emoji: '☕', blurb: 'What makes a place work day to day.', keys: ['parking', 'pets', 'water', 'powerBackup', 'security', 'amenities'] },
   { title: 'Anything else?', emoji: '💭', blurb: 'Say it in your own words. We\'ll figure it out.', keys: ['other'] },
 ];

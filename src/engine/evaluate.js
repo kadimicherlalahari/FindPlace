@@ -6,7 +6,7 @@
 // 'unknown' means the listing data doesn't say. A No Compromise preference
 // that is unknown does NOT eliminate the listing; it is flagged "verify
 // before visiting" instead, so missing data never silently hides a good flat.
-import { AMENITIES, FURNISHING, COMMUTE_MODES } from '../preferences.js';
+import { AMENITIES, FURNISHING, COMMUTE_MODES, commuteTrips } from '../preferences.js';
 import { estimateCommute } from './commute.js';
 
 const inr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
@@ -18,6 +18,9 @@ const unknown = (reason) => ({ status: 'unknown', degree: 0.5, reason });
 const falloff = (actual, limit, tolerance) => Math.max(0, Math.min(1, 1 - (actual - limit) / (limit * tolerance)));
 
 const has = (l, token) => l.amenities.includes(token);
+const splitAreas = (v) => String(v || '').split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+const whereText = (l) => [l.location.locality, l.location.address, l.location.city, l.title].filter(Boolean).join(' ').toLowerCase();
+const floorName = (f) => (f === 0 ? 'Ground floor' : `Floor ${f}`);
 const text = (l) => `${l.title} ${l.description} ${l.location.address || ''} ${l.location.locality || ''}`.toLowerCase();
 
 function amenityCheck(l, token, name) {
@@ -28,11 +31,16 @@ function amenityCheck(l, token, name) {
 
 export const CHECKS = {
   locations(l, v) {
-    const areas = String(v.areas).split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
-    const where = [l.location.locality, l.location.address, l.location.city, l.title].filter(Boolean).join(' ').toLowerCase();
-    const hit = areas.find((a) => where.includes(a.toLowerCase()));
+    const areas = splitAreas(v.areas);
+    const hit = areas.find((a) => whereText(l).includes(a.toLowerCase()));
     return hit ? pass(`In ${l.location.locality || hit}`)
       : fail(`In ${l.location.locality || l.location.city || 'another area'}, not in ${areas.join(', ')}`);
+  },
+
+  avoidAreas(l, v) {
+    const hit = splitAreas(v.areas).find((a) => whereText(l).includes(a.toLowerCase()));
+    return hit ? fail(`In ${l.location.locality || hit}, an area you ruled out`)
+      : pass(`Not in ${splitAreas(v.areas).join(', ')}`);
   },
 
   maxRent(l, v, ctx) {
@@ -54,6 +62,12 @@ export const CHECKS = {
     return l.bhk >= v.min ? pass(`${l.bhk} BHK`) : fail(`Only ${l.bhk} BHK, you want ${v.min}+`, Math.max(0, (l.bhk - (v.min - 2)) / 2) * 0.5);
   },
 
+  bathrooms(l, v) {
+    if (l.bathrooms == null) return unknown('Bathrooms not listed');
+    const n = (x) => `${x} bathroom${x === 1 ? '' : 's'}`;
+    return l.bathrooms >= v.min ? pass(n(l.bathrooms)) : fail(`Only ${n(l.bathrooms)}, you want ${v.min}+`, l.bathrooms / v.min * 0.5);
+  },
+
   furnishing(l, v) {
     if (!l.furnishing) return unknown('Furnishing not listed');
     const ok = v.accepted.includes(l.furnishing);
@@ -68,18 +82,17 @@ export const CHECKS = {
       : fail(`${l.sizeSqft} sq ft, ${v.sqft - l.sizeSqft} sq ft smaller than your ${v.sqft}`, Math.max(0, 1 - (v.sqft - l.sizeSqft) / (v.sqft * 0.3)));
   },
 
+  // Up to three trips (office, gym, family). The preference passes only when
+  // every trip is within its limit; degree is the average across trips.
   commute(l, v, ctx) {
-    const origin = ctx.origins[v.from];
-    if (!origin) return unknown(`Couldn't locate "${v.from}" to estimate commute`);
-    if (l.location.lat == null) return unknown('Listing has no location coordinates');
-    const mode = v.mode || 'driving';
-    const est = estimateCommute(origin, l.location, mode);
-    const desc = `~${est.minutes} min / ${est.km} km to ${v.from} by ${label(COMMUTE_MODES, mode).toLowerCase()} (estimate)`;
-    const overMin = v.maxMinutes ? est.minutes / v.maxMinutes : 0;
-    const overKm = v.maxKm ? est.km / v.maxKm : 0;
-    if (!v.maxMinutes && !v.maxKm) return pass(desc);
-    const ratio = Math.max(overMin, overKm);
-    return ratio <= 1 ? pass(desc) : fail(`${desc}, over your ${v.maxMinutes ? `${v.maxMinutes} min` : `${v.maxKm} km`} limit`, falloff(ratio, 1, 0.5));
+    const trips = commuteTrips(v).map((t) => ({ t, r: checkTrip(l, t, ctx) }));
+    if (!trips.length) return pass('No commute set');
+    if (trips.length === 1) return trips[0].r;
+    const degree = trips.reduce((s, x) => s + x.r.degree, 0) / trips.length;
+    const reason = trips.map((x) => x.r.reason).join('; ');
+    if (trips.some((x) => x.r.status === 'fail' || x.r.status === 'partial')) return fail(reason, degree);
+    if (trips.some((x) => x.r.status === 'unknown')) return { ...unknown(reason), degree };
+    return pass(reason);
   },
 
   parking(l, v) {
@@ -100,7 +113,15 @@ export const CHECKS = {
   },
 
   balcony: (l) => amenityCheck(l, 'balcony', 'balcony'),
-  lift: (l) => amenityCheck(l, 'lift', 'lift'),
+  // "Needs a lift above floor N": a low floor is fine without one.
+  lift(l, v) {
+    if (has(l, 'lift')) return pass(l.floor != null ? `Has a lift (${floorName(l.floor).toLowerCase()})` : 'Has a lift');
+    const limit = v.aboveFloor == null || v.aboveFloor === '' ? null : Number(v.aboveFloor);
+    if (limit != null && l.floor != null && l.floor <= limit) return pass(`${floorName(l.floor)}, no lift needed`);
+    const where = l.floor != null ? `${floorName(l.floor)}` : 'Floor not listed';
+    if (l.amenitiesKnown) return fail(`${where} and no lift listed`);
+    return unknown(`${where}; listing doesn't say whether it has a lift`);
+  },
   powerBackup: (l) => amenityCheck(l, 'power_backup', 'power backup'),
   water: (l) => amenityCheck(l, 'water_24x7', '24×7 water'),
   security: (l) => amenityCheck(l, 'security', 'security'),
@@ -159,6 +180,19 @@ function mentions(t, k) {
     if (/^(no|not|without|zero|non)\b/.test(k) || !/\b(no|not|without|zero|non)([\s-]+(on|a|the|in|any))?[\s-]+$/.test(t.slice(Math.max(0, i - 16), i))) return true;
   }
   return false;
+}
+
+function checkTrip(l, v, ctx) {
+  const to = v.name ? `${v.name} (${v.from})` : v.from;
+  const origin = ctx.origins[v.from];
+  if (!origin) return unknown(`Couldn't locate "${v.from}" to estimate commute`);
+  if (l.location.lat == null) return unknown('Listing has no location coordinates');
+  const mode = v.mode || 'driving';
+  const est = estimateCommute(origin, l.location, mode);
+  const desc = `~${est.minutes} min / ${est.km} km to ${to} by ${label(COMMUTE_MODES, mode).toLowerCase()} (estimate)`;
+  if (!v.maxMinutes && !v.maxKm) return pass(desc);
+  const ratio = Math.max(v.maxMinutes ? est.minutes / v.maxMinutes : 0, v.maxKm ? est.km / v.maxKm : 0);
+  return ratio <= 1 ? pass(desc) : fail(`${desc}, over your ${v.maxMinutes ? `${v.maxMinutes} min` : `${v.maxKm} km`} limit`, falloff(ratio, 1, 0.5));
 }
 
 export function evaluatePreference(listing, pref, ctx) {

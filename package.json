@@ -7,8 +7,10 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",
     "dev": "node --watch --env-file-if-exists=.env src/server.js",
-    "test": "node --test test/",
-    "telegram:webhook": "node --env-file-if-exists=.env scripts/set-webhook.js"
+    "start:demo": "node src/server.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "telegram:webhook": "node --env-file-if-exists=.env scripts/set-webhook.js",
+    "demo": "node scripts/demo.js"
   },
   "engines": {
     "node": "24.x"

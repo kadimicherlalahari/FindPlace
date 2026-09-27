@@ -1,7 +1,8 @@
 // Telegram Bot API integration.
 //  - Posts each friend's private preferences link in the group chat.
 //  - Posts progress ("2 of 3 done") and, once everyone submits, the results:
-//    a summary + one message per Top 10 apartment.
+//    a summary (linking to the shared comparison page) + one message per
+//    shortlisted flat showing what each friend gets and gives up.
 //  - Apartment messages carry Yes/No buttons for each pending compromise;
 //    only the affected person's taps count.
 //  - Commands: /newhunt, /links, /search, /status, /help, /chatid
@@ -29,6 +30,8 @@ async function api(method, body, attempt = 0) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// "Rent budget" -> "rent budget", but "Areas I won't consider" keeps its I.
+const lower = (s) => String(s ?? '').charAt(0).toLowerCase() + String(s ?? '').slice(1);
 const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const inr = (n) => (n == null ? '?' : `₹${Math.round(n).toLocaleString('en-IN')}`);
 const STATUS = { agreed: '✅ Everyone agrees', pending: '⏳ Waiting on answers', rejected: '❌ Someone said no' };
@@ -37,6 +40,7 @@ const send = (chatId, text, extra = {}) =>
   api('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...extra });
 
 export const personalLink = (person) => `${config.appUrl}/p/${person.access_token}`;
+export const shortlistLink = (runId) => `${config.appUrl}/r/${runId}`;
 // Telegram only accepts public https URLs on buttons.
 const canUseUrlButtons = () => /^https:\/\//.test(config.appUrl) && !/localhost|127\.0\.0\.1/.test(config.appUrl);
 
@@ -108,8 +112,9 @@ export function formatSummary(view) {
     for (const r of reasons) lines.push(`• ${esc(r.personName)}'s ${esc(r.label.toLowerCase())}: ${r.count} flat${r.count > 1 ? 's' : ''}`);
   }
   lines.push('', view.top.length
-    ? `Top ${view.top.length} below 👇 The group score rewards flats where <i>all three</i> of you are happy, not just two.`
+    ? `Your top ${view.top.length} below 👇 Each one shows what every one of you gets, and what she'd be giving up. Nobody's picking for you: that's your call together 💬`
     : 'No flat passed everyone\'s No Compromise rules 😕 Try switching one must-have to "Can compromise" on your personal page.');
+  if (view.top.length) lines.push('', `🗂 <a href="${esc(shortlistLink(view.run.id))}">Compare all ${view.top.length} side by side</a>`);
   lines.push('', '💡 Answer compromise questions with the buttons, or on your personal page. Edit your wishlist there any time and I\'ll re-match.');
   return lines.join('\n');
 }
@@ -122,7 +127,8 @@ export function formatApartment(item, people) {
     `<b>#${item.rank} ${esc(l.title)}</b>`,
     `📍 ${esc([l.location.locality, l.location.city].filter(Boolean).join(', ') || l.location.address || 'Location n/a')}`,
     `💰 ${inr(l.rent)}/mo · <b>${inr(l.rent / people.length)} each</b> · deposit ${inr(l.deposit)}`,
-    `🛏 ${l.bhk ?? '?'} BHK · ${l.sizeSqft ?? '?'} sq ft · ${esc(l.furnishing || 'furnishing n/a')}`,
+    `🛏 ${l.bhk ?? '?'} BHK${l.bathrooms != null ? ` · ${l.bathrooms} bath` : ''} · ${l.sizeSqft ?? '?'} sq ft · ${esc(l.furnishing || 'furnishing n/a')}`,
+    l.floor != null ? `🏢 ${l.floor === 0 ? 'Ground floor' : `Floor ${l.floor}`}${l.amenities.includes('lift') ? ' · lift' : l.amenitiesKnown ? ' · no lift' : ''}` : null,
     l.availableFrom ? `📅 Available from ${esc(l.availableFrom)}` : null,
     '',
     `⭐ <b>Group score ${Math.round(item.overall_score)}</b>`,
@@ -130,19 +136,21 @@ export function formatApartment(item, people) {
     `${STATUS[item.status] || item.status}`,
   ].filter((x) => x !== null);
 
-  if (item.compromises.length) {
-    lines.push('', '<b>🤝 Who\'s compromising</b>');
-    for (const c of item.compromises) {
-      const who = byId[c.person_id];
-      if (c.status === 'pending') {
-        lines.push(`❓ ${mention(who)}: this flat doesn't match your preference for <b>${esc(c.label.toLowerCase())}</b>. Are you okay compromising? <i>(details on your private page)</i>`);
-      } else {
-        lines.push(`${c.status === 'accepted' ? '✅' : '❌'} ${esc(who.name)}, ${esc(c.label.toLowerCase())}: ${c.status === 'accepted' ? 'okay to compromise' : 'not okay'}`);
-      }
+  // What each friend gets and gives up: preference names only, never numbers.
+  lines.push('', '<b>👥 How it works for each of you</b>');
+  const ICON = { accepted: '✅', rejected: '❌', pending: '⏳' };
+  people.forEach((p, i) => {
+    const gets = (item.met || []).filter((m) => m.personId === p.id).map((m) => esc(lower(m.label)));
+    const gives = item.compromises.filter((c) => c.person_id === p.id);
+    lines.push(`${HEARTS[i]} <b>${esc(p.name)}</b>`);
+    if (!gives.length) lines.push(gets.length ? `   🎉 Gets everything: ${gets.join(', ')}` : '   🎉 Nothing on her list is missed');
+    else {
+      if (gets.length) lines.push(`   ✔️ Gets: ${gets.join(', ')}`);
+      lines.push(`   🤝 Gives up: ${gives.map((c) => `${esc(lower(c.label))} ${ICON[c.status]}`).join(', ')}`);
     }
-  } else {
-    lines.push('', '🎉 No compromises needed. It ticks everyone\'s boxes!');
-  }
+  });
+  const waiting = [...new Set(item.compromises.filter((c) => c.status === 'pending').map((c) => c.person_id))].map((id) => byId[id]);
+  if (waiting.length) lines.push('', `❓ ${waiting.map(mention).join(', ')}: okay with what you'd give up here? Tap below 👇 <i>(details on your private page)</i>`);
   if (item.unverified?.length) {
     lines.push('', '<b>🔍 Check on a visit</b>');
     for (const u of item.unverified.slice(0, 4)) lines.push(`• ${esc(u.personName)}: ${esc(u.label.toLowerCase())}`);
@@ -165,9 +173,12 @@ export async function sendRunToTelegram(runId) {
   const chatId = view.group.telegram_chat_id;
   if (!chatId) return { sent: false, reason: 'No Telegram chat ID for this hunt' };
 
-  await send(chatId, formatSummary(view));
+  const compare = view.top.length && canUseUrlButtons()
+    ? { reply_markup: { inline_keyboard: [[{ text: `🗂 Compare all ${view.top.length} side by side`, url: shortlistLink(view.run.id) }]] } }
+    : {};
+  await send(chatId, formatSummary(view), compare);
   for (const item of view.top) {
-    await sleep(400); // a run is 11 messages, under Telegram's 20/minute group limit
+    await sleep(400); // a run is 4 messages, well under Telegram's 20/minute group limit
     const { text, reply_markup } = formatApartment(item, view.people);
     const msg = await send(chatId, text, { reply_markup });
     await db.update('evaluations', { id: item.id }, { tg_message_id: msg.message_id });

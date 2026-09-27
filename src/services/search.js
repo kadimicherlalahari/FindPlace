@@ -2,6 +2,7 @@
 // explain -> store -> ask for compromises -> notify Telegram.
 import { db } from '../db/index.js';
 import { config } from '../config.js';
+import { commuteTrips } from '../preferences.js';
 import { fetchListings } from '../providers/index.js';
 import { resolveCoordinates } from '../engine/commute.js';
 import { rankListings } from '../engine/rank.js';
@@ -14,9 +15,13 @@ import { deriveStatus, latestRun } from './runs.js';
 const running = new Set();
 const STALE_MS = 5 * 60 * 1000;
 
+const areasOf = (p) => String(p.value.areas).split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
+
 export function buildQuery(people, prefs) {
   const of = (key) => prefs.filter((p) => p.key === key);
-  const locations = [...new Set(of('locations').flatMap((p) => String(p.value.areas).split(/[,;\n]/).map((s) => s.trim()).filter(Boolean)))];
+  // Don't fetch an area someone has ruled out as a No Compromise: nothing there can make the shortlist.
+  const banned = new Set(of('avoidAreas').filter((p) => p.priority === 'must').flatMap(areasOf).map((a) => a.toLowerCase()));
+  const locations = [...new Set(of('locations').flatMap(areasOf))].filter((a) => !banned.has(a.toLowerCase()));
   const bhks = of('bhk').map((p) => p.value.min);
   const rents = of('maxRent').map((p) => p.value.amount);
   return {
@@ -56,15 +61,19 @@ async function doRun(groupId, notify) {
       await db.upsert('listings', listings.map((l) => ({ id: l.id, source: l.source, external_id: l.externalId, data: l, fetched_at: new Date().toISOString() })), 'id');
     }
 
-    const origins = [...new Set(prefs.filter((p) => p.key === 'commute').map((p) => p.value.from))];
+    const origins = [...new Set(prefs.filter((p) => p.key === 'commute').flatMap((p) => commuteTrips(p.value).map((t) => t.from)))];
     const originPoints = origins.length ? await resolveCoordinates(listings, origins) : {};
     const ranking = rankListings(listings, people, prefs, { groupSize: people.length, origins: originPoints }, config.topN);
 
-    const explanations = await explainTop(ranking.top, people);
+    // Ranks 1..shortlistSize are the shortlist (explained, with compromise
+    // questions); the rest of the top N are kept as runners-up.
+    const shortlist = ranking.top.slice(0, config.shortlistSize);
+    const explanations = await explainTop(shortlist, people);
 
     const topIds = new Map(ranking.top.map((r, i) => [r.listing.id, i]));
     const rows = ranking.results.map((r) => {
       const idx = topIds.get(r.listing.id);
+      const listed = idx !== undefined && idx < config.shortlistSize;
       return {
         run_id: run.id,
         listing_id: r.listing.id,
@@ -74,15 +83,16 @@ async function doRun(groupId, notify) {
         person_scores: r.personScores,
         unmet: r.unmet,
         unverified: r.unverified,
+        met: idx === undefined ? null : r.met,
         rank: idx === undefined ? null : idx + 1,
-        status: idx === undefined ? null : deriveStatus(r.unmet.map(() => ({ status: 'pending' }))),
-        explanation: idx === undefined ? null : explanations[idx],
+        status: listed ? deriveStatus(r.unmet.map(() => ({ status: 'pending' }))) : null,
+        explanation: listed ? explanations[idx] : null,
       };
     });
     const saved = rows.length ? await db.insert('evaluations', rows) : [];
 
     // One compromise question per unmet Can Compromise preference, per top apartment.
-    const compromises = saved.filter((e) => e.rank).flatMap((e) => e.unmet.map((u) => ({
+    const compromises = saved.filter((e) => e.rank && e.rank <= config.shortlistSize).flatMap((e) => e.unmet.map((u) => ({
       run_id: run.id, evaluation_id: e.id, person_id: u.personId, pref_key: u.key, label: u.label, detail: u.reason, status: 'pending',
     })));
     if (compromises.length) await db.insert('compromises', compromises);

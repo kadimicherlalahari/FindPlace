@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { db, one } from '../db/index.js';
-import { PREF_BY_KEY, isPreferenceSet } from '../preferences.js';
+import { PREF_BY_KEY, commuteTrips, isPreferenceSet } from '../preferences.js';
 import { interpretFreeText } from './gemini.js';
 
 export function httpError(status, message) {
@@ -58,8 +58,8 @@ export async function savePreferences(personId, prefs, { strict = false } = {}) 
     const def = PREF_BY_KEY[key];
     if (!def || !isPreferenceSet(key, input?.value)) continue;
     const priority = ['must', 'flex'].includes(input.priority) ? input.priority : 'flex';
-    if (key === 'commute' && !input.value.maxMinutes && !input.value.maxKm) {
-      errors.push('Commute: add a max time or a max distance');
+    if (key === 'commute' && commuteTrips(input.value).some((t) => !t.maxMinutes && !t.maxKm)) {
+      errors.push('Commutes: add a max time or a max distance for each place');
       if (!strict) continue;
     }
     const value = coerce(def, input.value);
@@ -90,8 +90,16 @@ export async function submitPreferences(person, prefs) {
 }
 
 function coerce(def, value) {
+  if (def.key === 'commute') {
+    const trip = def.fields[0];
+    return { trips: commuteTrips(value).slice(0, trip.max).map((t) => coerceFields(trip.itemFields, t)) };
+  }
+  return coerceFields(def.fields, value);
+}
+
+function coerceFields(fields, value) {
   const out = {};
-  for (const f of def.fields) {
+  for (const f of fields) {
     const v = value[f.name];
     if (v === undefined || v === '' || v === null) continue;
     out[f.name] = f.type === 'number' ? Number(v) : f.type === 'toggle' ? Boolean(v) : f.type === 'multi' ? [].concat(v) : String(v).trim();

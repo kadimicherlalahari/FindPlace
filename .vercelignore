@@ -1,0 +1,7 @@
+# Never upload local secrets, local data or review screenshots with `vercel deploy`.
+.env
+.env.*
+data/
+.impeccable/
+.claude/
+node_modules/

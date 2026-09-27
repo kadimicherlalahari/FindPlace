@@ -30,5 +30,7 @@ export const config = {
     kind: env.GEOCODER || 'nominatim',
     contact: env.GEOCODER_CONTACT || 'apartment-matchmaker',
   },
+  // The shortlist the group discusses; ranks after it are shown as runners-up.
+  shortlistSize: 3,
   topN: 10,
 };

@@ -11,15 +11,18 @@ import { db } from './db/index.js';
 import { PREFERENCES, STEPS } from './preferences.js';
 import { createGroup, httpError, personByToken, savePreferences, submitPreferences } from './services/groups.js';
 import { runSearch } from './services/search.js';
-import { getRunView, latestRun, respondToCompromise } from './services/runs.js';
+import { getRunView, latestRun, respondToCompromise, shareableView } from './services/runs.js';
 import { getBotUsername, handleUpdate, personalLink, refreshApartmentMessage, sendInvites, sendProgress, telegramEnabled } from './services/telegram.js';
 import { geminiEnabled } from './services/gemini.js';
 import { background } from './background.js';
 
 export const app = express();
+// Vercel detects this Express app and serves non-/api routes from here too.
+export default app;
 app.use(express.json({ limit: '200kb' }));
 app.use(express.static(path.resolve('public')));
 app.get('/p/:token', (req, res) => res.sendFile(path.resolve('public/me.html')));
+app.get('/r/:runId', (req, res) => res.sendFile(path.resolve('public/shortlist.html')));
 
 const route = (fn) => (req, res) => Promise.resolve(fn(req, res)).then((out) => res.json(out ?? null)).catch((err) => {
   if (!err.status) console.error(err);
@@ -64,22 +67,7 @@ app.get('/api/me/:token', route(async (req) => {
   const people = await db.select('people', { group_id: me.group_id }, { order: { column: 'slot' } });
   const prefs = await db.select('preferences', { person_id: me.id });
   const run = await latestRun(me.group_id);
-  let results = null;
-  if (run?.status === 'done') {
-    const v = await getRunView(run.id);
-    // Only share what the shortlist needs. Other friends' raw preferences
-    // (the run snapshot, unmet details) stay private.
-    const { preferences_snapshot, elimination_summary, ...publicRun } = v.run;
-    const mine = (x) => x.personId === me.id || x.person_id === me.id;
-    results = {
-      run: { ...publicRun, elimination_summary: (elimination_summary || []).map(({ example, ...r }) => r) },
-      top: v.top.map(({ unmet, eliminations, ...t }) => ({
-        ...t,
-        compromises: t.compromises.map((c) => (mine(c) ? c : { ...c, detail: null })),
-        unverified: (t.unverified || []).map((u) => (mine(u) ? u : { ...u, reason: null })),
-      })),
-    };
-  }
+  const results = run?.status === 'done' ? shareableView(await getRunView(run.id), me.id) : null;
   return {
     me: { id: me.id, name: me.name, slot: me.slot, submitted_at: me.submitted_at, telegramConnected: Boolean(me.telegram_user_id) },
     group: { name: group[0]?.name },
@@ -88,6 +76,22 @@ app.get('/api/me/:token', route(async (req) => {
     matching: run?.status === 'running',
     results,
     botUsername: await getBotUsername().catch(() => null),
+  };
+}));
+
+// The group's shortlist, as one shared read-only page (/r/:runId). The run
+// id is an unguessable UUID that is only ever posted to the group chat, and
+// the page carries nothing a friend's own page wouldn't show about the others.
+app.get('/api/shortlist/:runId', route(async (req) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.runId)) throw httpError(404, 'Shortlist not found');
+  const view = await getRunView(req.params.runId).catch(() => null);
+  if (!view || view.run.status !== 'done') throw httpError(404, 'Shortlist not found');
+  const latest = await latestRun(view.run.group_id);
+  return {
+    group: { name: view.group.name },
+    friends: view.people.map((p) => ({ id: p.id, name: p.name, slot: p.slot })),
+    newerRunId: latest && latest.id !== view.run.id && latest.status === 'done' ? latest.id : null,
+    ...shareableView(view),
   };
 }));
 
