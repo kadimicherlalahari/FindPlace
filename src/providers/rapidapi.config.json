@@ -1,0 +1,32 @@
+{
+  "_comment": "Template mapping for a RapidAPI rentals API. Adjust endpoint, params and field paths to match the API you subscribed to (see its 'Endpoints' tab on RapidAPI). Params support {{location}}, {{minBhk}}, {{maxRent}}, {{page}}. Field paths are dot paths into each result object; arrays can be mapped with 'path[].field'. Empty-string params are dropped.",
+  "method": "GET",
+  "path": "/search",
+  "params": {
+    "location": "{{location}}",
+    "purpose": "rent",
+    "min_bedrooms": "{{minBhk}}",
+    "max_price": "{{maxRent}}",
+    "page": "{{page}}"
+  },
+  "resultsPath": "data.results",
+  "fields": {
+    "externalId": "id",
+    "title": "title",
+    "address": "address",
+    "locality": "locality",
+    "city": "city",
+    "lat": "latitude",
+    "lng": "longitude",
+    "rent": "price",
+    "deposit": "deposit",
+    "bhk": "bedrooms",
+    "sizeSqft": "area_sqft",
+    "furnishing": "furnishing",
+    "amenities": "amenities",
+    "photos": "images[].url",
+    "availableFrom": "available_from",
+    "url": "url",
+    "description": "description"
+  }
+}

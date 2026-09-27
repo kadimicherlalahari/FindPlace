@@ -1,0 +1,21 @@
+{
+  "name": "apartment-matchmaker",
+  "version": "1.0.0",
+  "description": "Find apartments three friends can realistically agree on.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "test": "node --test test/",
+    "telegram:webhook": "node --env-file-if-exists=.env scripts/set-webhook.js"
+  },
+  "engines": {
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "@vercel/functions": "^3.9.9",
+    "express": "^4.21.0"
+  }
+}

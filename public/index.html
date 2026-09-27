@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fdf8ff">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600&family=Nunito:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏡</text></svg>">
+  <link rel="stylesheet" href="/styles.css">
+  <title>Flat Hunt</title>
+</head>
+<body>
+  <header class="topbar"><a class="logo" href="/"><span>🏡</span>Flat Hunt</a></header>
+  <main class="wrap stack" id="app">
+    <section class="hero stack">
+      <div class="emoji">🏡✨</div>
+      <h1>Flat hunt, girls!</h1>
+      <p class="muted">Three friends, one flat. Everyone shares her wishlist privately, and we find the places all three of you can actually agree on.</p>
+    </section>
+
+    <ol class="how" style="padding:0;margin-top:22px">
+      <li><div><b>Add the bot to your group chat</b><p class="small muted" id="botLine">Then start a hunt with the three names.</p></div></li>
+      <li><div><b>Everyone fills in her own wishlist</b><p class="small muted">Each of you gets a private link. Mark what's a <b>must-have</b> and where you <b>can compromise</b>.</p></div></li>
+      <li><div><b>Get your shortlist in the chat</b><p class="small muted">Top 10 flats, with notes on who's compromising on what. Say yes or no right there.</p></div></li>
+    </ol>
+
+    <section class="card stack" style="margin-top:22px">
+      <h2>Start in Telegram 💬</h2>
+      <p class="small">In your group chat with the bot, send:</p>
+      <p><code>/newhunt Asha, Priya, Meera</code></p>
+      <p class="small muted">Use your own three names. The bot replies with everyone's private links.</p>
+    </section>
+
+    <details class="card" id="webSetup">
+      <summary class="display" style="cursor:pointer;font-size:18px">…or set it up here</summary>
+      <form id="hunt" class="stack" style="margin-top:16px">
+        <div class="field"><label class="lbl" for="hname">Hunt name</label><input id="hname" name="name" placeholder="e.g. Koramangala girls 💜"></div>
+        <div class="field" id="chatField"><label class="lbl" for="chat">Telegram group chat ID</label><input id="chat" name="chat" inputmode="numeric" placeholder="-1001234567890"><p class="hint">Send <code>/chatid</code> in your group to get it.</p></div>
+        <div id="friendsFields" class="stack"></div>
+        <button class="btn btn-primary btn-block">Send our private links 💌</button>
+      </form>
+      <div id="setupDone" hidden></div>
+    </details>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="/home.js"></script>
+</body>
+</html>
